@@ -5,9 +5,6 @@ basic-*/
 raf_train.txt
 raf_val.txt
 
-# ── Kaggle-specific (not needed on RunPod) ────────────────────────────────────
-kaggle_train.ipynb
-
 # ── Training output / logs ────────────────────────────────────────────────────
 logs/
 *.log
