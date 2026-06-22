@@ -42,7 +42,7 @@ elif [ -f "${SCRIPT_DIR}/.dataset_path" ]; then
     fi
 fi
 
-# Priority 3: scan common local locations
+# Priority 3: well-known local path dataset1/
 if [ -z "${RAF_ROOT}" ]; then
     RAF_ROOT=$(python3 - << 'PYEOF'
 import os, sys
@@ -52,13 +52,17 @@ def find_raf(start):
     for root, dirs, files in os.walk(start):
         if required <= set(dirs):
             return root
-        # don't descend into hidden or cache dirs
         dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
     return None
 
-# Search script dir and parent (covers typical RunPod /workspace layout)
-script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in dir() else os.getcwd()
-for search in [script_dir, os.path.dirname(script_dir), "/workspace"]:
+script_dir = "/workspace/FER-YOLO"
+# Check dataset1 first (explicit user-provided location), then broader scan
+for search in [
+    os.path.join(script_dir, "dataset1"),
+    script_dir,
+    os.path.dirname(script_dir),
+    "/workspace",
+]:
     r = find_raf(search)
     if r:
         print(r)

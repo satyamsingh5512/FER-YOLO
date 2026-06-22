@@ -72,12 +72,27 @@ elif [ -f "${SCRIPT_DIR}/.dataset_path" ]; then
     if [ -d "${SAVED}/EmoLabel" ]; then
         echo "Dataset already present: ${SAVED}"
     else
-        python3 download_dataset.py --output "${SCRIPT_DIR}/dataset"
+        python3 download_dataset.py --output "${SCRIPT_DIR}/dataset1"
     fi
 
 else
-    echo "Downloading RAF-DB from Google Drive (~1.8 GB) …"
-    python3 download_dataset.py --output "${SCRIPT_DIR}/dataset"
+    # Check dataset1 before hitting Google Drive
+    _D1_ROOT=$(python3 -c "
+import os, sys
+def find_raf(d):
+    req = {'EmoLabel','Annotation','Image'}
+    for root, dirs, files in os.walk(d):
+        if req <= set(dirs): print(root); sys.exit(0)
+find_raf('${SCRIPT_DIR}/dataset1')
+" 2>/dev/null || true)
+
+    if [ -n "${_D1_ROOT}" ] && [ -d "${_D1_ROOT}/EmoLabel" ]; then
+        echo "Dataset found in dataset1: ${_D1_ROOT}"
+        echo "${_D1_ROOT}" > "${SCRIPT_DIR}/.dataset_path"
+    else
+        echo "Downloading RAF-DB from Google Drive (~1.8 GB) …"
+        python3 download_dataset.py --output "${SCRIPT_DIR}/dataset1"
+    fi
 fi
 
 RAF_ROOT=$(cat "${SCRIPT_DIR}/.dataset_path" 2>/dev/null || echo "")

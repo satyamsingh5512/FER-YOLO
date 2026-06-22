@@ -10,7 +10,7 @@ https://drive.google.com/drive/folders/0B4E10azXECctRUgwVmFPblFUdUE
 
 Usage
 -----
-    python download_dataset.py                        # downloads to ./dataset/
+    python download_dataset.py                        # downloads to ./dataset1/
     python download_dataset.py --output ./data        # custom output dir
 
 After this script finishes it prints the RAF-DB root path and writes it to
@@ -80,8 +80,8 @@ def print_manual_instructions(output_dir):
     log(f"    1. Open: {GDRIVE_URL}")
     log(f"    2. Click the folder → Download → Download as ZIP")
     log(f"    3. Upload the ZIP to your RunPod pod:")
-    log(f"       scp ~/Downloads/<zip> root@<POD_IP>:{output_dir}/")
-    log(f"    4. Unzip: cd {output_dir} && unzip <zip>")
+    log(f"       scp ~/Downloads/<zip> root@<POD_IP>:/workspace/FER-YOLO/dataset1/")
+    log(f"    4. Unzip: cd /workspace/FER-YOLO/dataset1 && unzip <zip>")
     log()
     log("  Option B — gdown on RunPod (fresh IP has no rate-limit):")
     log(f"    pip install gdown")
@@ -180,9 +180,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--output", "--output-dir",
-        default="./dataset",
+        default="./dataset1",
         metavar="DIR",
-        help="Directory to download the dataset into (default: ./dataset)",
+        help="Directory to download the dataset into (default: ./dataset1)",
     )
     ap.add_argument(
         "--detect-only",
