@@ -71,27 +71,33 @@ def find_raf_root(search_dir):
 def print_manual_instructions(output_dir):
     log()
     log("=" * 60)
-    log("  MANUAL DOWNLOAD INSTRUCTIONS")
+    log("  MANUAL UPLOAD INSTRUCTIONS")
     log("=" * 60)
     log()
-    log("Automated download failed. Download the dataset manually:")
+    log("The GDrive link requires a Google sign-in (401), so automated")
+    log("download is not possible. Upload the dataset from your local machine:")
     log()
-    log("  Option A — via your browser:")
-    log(f"    1. Open: {GDRIVE_URL}")
-    log(f"    2. Click the folder → Download → Download as ZIP")
-    log(f"    3. Upload the ZIP to your RunPod pod:")
-    log(f"       scp ~/Downloads/<zip> root@<POD_IP>:/workspace/FER-YOLO/dataset1/")
-    log(f"    4. Unzip: cd /workspace/FER-YOLO/dataset1 && unzip <zip>")
+    log("  ── FROM YOUR LOCAL MACHINE ──────────────────────────────────")
+    log("  Run this in your local terminal (find your pod SSH port in the")
+    log("  RunPod dashboard under Connect → SSH):")
     log()
-    log("  Option B — gdown on RunPod (fresh IP has no rate-limit):")
-    log(f"    pip install gdown")
-    log(f"    gdown --folder \"{GDRIVE_URL}\" -O {output_dir}/")
+    log("  rsync -avz --progress \\")
+    log("    /path/to/basic/ \\")
+    log(f"    root@<POD_IP>:{output_dir}/basic/ \\")
+    log("    -e 'ssh -p <SSH_PORT>'")
     log()
-    log("  Option C — rclone (if you have a Google account):")
-    log(f"    rclone copy 'gdrive:RAF-DB' {output_dir}/ --progress")
+    log("  # Or with scp:")
+    log("  scp -P <SSH_PORT> -r /path/to/basic/ \\")
+    log(f"    root@<POD_IP>:{output_dir}/")
     log()
-    log("After placing the dataset, re-run:")
-    log("    python download_dataset.py --output", output_dir, "(auto-detect only)")
+    log("  ── YOUR LOCAL DATASET PATH ──────────────────────────────────")
+    log("  Local path of the dataset (the basic/ folder containing")
+    log("  EmoLabel/, Annotation/, Image/):")
+    log("  /home/satym-in/Documents/projects/Nikhil-v1/FER-YOLO-Mamba/basic-20260621T140957Z-3-001/basic")
+    log()
+    log("  ── AFTER UPLOADING ──────────────────────────────────────────")
+    log("  The dataset will be auto-detected. Just re-run:")
+    log("    bash run_training.sh")
     log()
 
 
@@ -104,8 +110,6 @@ def attempt_download(output_dir):
     log(f"Size: ~1.8 GB  (this will take a few minutes)")
     log()
 
-    # gdown.download_folder attempts to list & download all files in the folder.
-    # use_cookies=False avoids stale auth from a previous session.
     try:
         result = gdown.download_folder(
             url=GDRIVE_URL,
@@ -125,7 +129,7 @@ def detect_or_download(output_dir):
     1. If RAF root already exists under output_dir → return it (cached).
     2. Otherwise attempt gdown download, then re-detect.
     """
-    # --- check if already downloaded ---
+    # --- check if already downloaded / uploaded ---
     existing = find_raf_root(output_dir)
     if existing:
         log(f"Dataset already present at: {existing}")
@@ -138,26 +142,30 @@ def detect_or_download(output_dir):
         log(f"Dataset found at: {existing}")
         return existing
 
-    # --- download ---
+    # --- try download ---
     ok, err = attempt_download(output_dir)
 
     if not ok:
+        auth_hint = "401" in (err or "") or "permission" in (err or "").lower()
         quota_hint = (
             "quota" in (err or "").lower()
             or "rate" in (err or "").lower()
             or "too many" in (err or "").lower()
         )
         log()
-        if quota_hint:
+        if auth_hint:
+            log("The Google Drive folder requires a Google sign-in (401).")
+            log("Automated download is not possible — please upload manually.")
+        elif quota_hint:
             log("Google Drive daily download quota exceeded.")
-            log("Wait 24 hours or use a different Google account / IP.")
+            log("Wait 24 hours or upload manually (see below).")
         else:
             log(f"gdown error: {err}")
         print_manual_instructions(output_dir)
         return None
 
     # --- find RAF root after download ---
-    time.sleep(1)  # let filesystem sync
+    time.sleep(1)
     raf_root = find_raf_root(output_dir)
     if raf_root is None:
         log()
