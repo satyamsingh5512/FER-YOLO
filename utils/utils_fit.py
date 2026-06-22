@@ -44,8 +44,8 @@ def fit_one_epoch(model_train, model, ema, yolo_loss, loss_history, eval_callbac
             loss_value.backward()
             optimizer.step()
         else:
-            from torch.cuda.amp import autocast
-            with autocast():
+            from torch.amp import autocast
+            with autocast(device_type='cuda'):
                 outputs = model_train(images)
                 #----------------------#
                 #   计算损失

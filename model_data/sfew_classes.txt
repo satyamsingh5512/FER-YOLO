@@ -1,7 +1,7 @@
-Angry 
-Disgust  
-Fear  
-Happy  
+Angry
+Disgust
+Fear
+Happy
 Neutral
-Sad  
-Surprise 
+Sad
+Surprise

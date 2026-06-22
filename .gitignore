@@ -1,0 +1,25 @@
+# ── Dataset (1.8 GB — upload separately to RunPod via rsync/scp) ──────────────
+basic-*/
+
+# ── Generated annotation files (recreated by convert_raf_to_yolo.py) ──────────
+raf_train.txt
+raf_val.txt
+
+# ── Kaggle-specific (not needed on RunPod) ────────────────────────────────────
+kaggle_train.ipynb
+
+# ── Training output / logs ────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.ipynb_checkpoints/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+.idea/
+.vscode/

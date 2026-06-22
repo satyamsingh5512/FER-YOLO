@@ -1,12 +1,26 @@
-torch
-torchvision
+# FER-YOLO-Mamba dependencies
+#
+# IMPORTANT: do NOT pin torch/torchvision here. Kaggle and RunPod GPU images
+# already ship a CUDA build of torch, and reinstalling it usually breaks the
+# environment. This file only lists the lightweight pure-Python deps.
+#
+# The two CUDA extensions (causal-conv1d, mamba-ssm) are NOT listed here on
+# purpose. Installing them from PyPI triggers a 20-40 min source compile that
+# often fails. Install them with the bundled helper instead, which downloads a
+# matching prebuilt wheel for your torch/CUDA/python:
+#
+#     python install_mamba.py
+#
+# ---------------------------------------------------------------------------
+
+packaging
+einops
+timm
 tensorboard
-scipy==1.2.1
-numpy==1.17.0
-matplotlib==3.1.2
-opencv_python==4.1.2.30
-tqdm==4.60.0
-Pillow==8.2.0
-h5py==2.10.0
-causal-convd==1.2.0.post2
-mamba-ssm==1.2.0.post1
+scipy
+numpy
+matplotlib
+opencv-python
+tqdm
+Pillow
+h5py

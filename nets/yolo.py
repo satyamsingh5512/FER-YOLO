@@ -9,29 +9,60 @@ from typing import Optional, Callable, Any
 from .darknet import BaseConv, CSPDarknet, CSPLayer, DWConv
 import math
 from einops import rearrange, repeat
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import torch.nn.functional as F
-try:
-    from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
-except:
-    pass
 
+# timm: layers moved from timm.models.layers -> timm.layers in v0.9+
 try:
-    "sscore acts the same as mamba_ssm"
-    SSMODE = "sscore"
-    import selective_scan_cuda_core
-except Exception as e:
-    print(e, flush=True)
-    "you should install mamba_ssm to use this"
-    SSMODE = "mamba_ssm"
+    from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+except ImportError:
+    from timm.layers import DropPath, to_2tuple, trunc_normal_
+
+# PyTorch >= 2.4 deprecated torch.cuda.amp.custom_fwd/custom_bwd
+if hasattr(torch.cuda.amp, 'custom_fwd'):
+    _amp_fwd = torch.cuda.amp.custom_fwd
+    _amp_bwd = torch.cuda.amp.custom_bwd
+else:
+    _amp_fwd = torch.amp.custom_fwd(device_type='cuda')
+    _amp_bwd = torch.amp.custom_bwd(device_type='cuda')
+
+# mamba-ssm CUDA kernels — try standard package first, then VMamba custom.
+#
+# This repo only uses the compiled `selective_scan_cuda` extension (its fwd/bwd
+# signatures are stable across mamba-ssm 1.2 -> 2.3). We import that directly
+# instead of `mamba_ssm.ops.selective_scan_interface`, because importing the
+# mamba_ssm package triggers mamba_ssm/__init__ -> MambaLMHeadModel, which drags
+# in transformers/triton and can fail for reasons unrelated to the kernels.
+try:
     import selective_scan_cuda
-    # from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
+    SSMODE = "mamba_ssm"
+    # selective_scan_fn / selective_scan_ref are imported for API parity only;
+    # they are not used in this repo, so a failure here must not be fatal.
+    try:
+        from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
+    except Exception:
+        selective_scan_fn = selective_scan_ref = None
+    print("mamba_ssm mode", flush=True)
+except Exception:
+    try:
+        import selective_scan_cuda_core
+        SSMODE = "sscore"
+        print("sscore mode", flush=True)
+    except Exception as e:
+        raise ImportError(
+            "Could not import the selective-scan CUDA kernels "
+            "(neither `selective_scan_cuda` from mamba-ssm nor "
+            "`selective_scan_cuda_core`).\n"
+            "Install the matching prebuilt wheels with:\n"
+            "    python install_mamba.py\n"
+            "(this requires a CUDA-enabled GPU runtime).\n"
+            f"Original error: {e}"
+        )
 
-# an alternative for mamba_ssm (in which causal_conv1d is needed)
+# optional alternative selective_scan implementation
 try:
     from selective_scan import selective_scan_fn as selective_scan_fn_v1
     from selective_scan import selective_scan_ref as selective_scan_ref_v1
-except:
+except Exception:
     pass
 
 class PatchEmbed2D(nn.Module):
@@ -141,7 +172,7 @@ class Final_PatchExpand2D(nn.Module):
 class SelectiveScanMamba(torch.autograd.Function):
     # comment all checks if inside cross_selective_scan
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    @_amp_fwd
     def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=False, nrows=1, backnrows=1, oflex=True):
         ctx.delta_softplus = delta_softplus
         out, x, *rest = selective_scan_cuda.fwd(u, delta, A, B, C, D, None, delta_bias, delta_softplus)
@@ -149,7 +180,7 @@ class SelectiveScanMamba(torch.autograd.Function):
         return out
     
     @staticmethod
-    @torch.cuda.amp.custom_bwd
+    @_amp_bwd
     def backward(ctx, dout, *args):
         u, delta, A, B, C, D, delta_bias, x = ctx.saved_tensors
         if dout.stride(-1) != 1:
@@ -164,7 +195,7 @@ class SelectiveScanMamba(torch.autograd.Function):
 
 class SelectiveScanCore(torch.autograd.Function):
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    @_amp_fwd
     def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=False, nrows=1, backnrows=1, oflex=True):
         ctx.delta_softplus = delta_softplus
         if SSMODE == "mamba_ssm":
@@ -172,11 +203,9 @@ class SelectiveScanCore(torch.autograd.Function):
         else:
             out, x, *rest = selective_scan_cuda_core.fwd(u, delta, A, B, C, D, delta_bias, delta_softplus, nrows)
         ctx.save_for_backward(u, delta, A, B, C, D, delta_bias, x)   
-     #   out, x, *rest = selective_scan_cuda_core.fwd(u, delta, A, B, C, D, delta_bias, delta_softplus, 1)
-       # ctx.save_for_backward(u, delta, A, B, C, D, delta_bias, x)
         return out
     @staticmethod
-    @torch.cuda.amp.custom_bwd
+    @_amp_bwd
     def backward(ctx, dout, *args):
         u, delta, A, B, C, D, delta_bias, x = ctx.saved_tensors
         if dout.stride(-1) != 1:
@@ -198,7 +227,7 @@ class SelectiveScanCore(torch.autograd.Function):
 class SelectiveScanOflex(torch.autograd.Function):
     # comment all checks if inside cross_selective_scan
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    @_amp_fwd
     def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=False, nrows=1, backnrows=1, oflex=True):
         ctx.delta_softplus = delta_softplus
         out, x, *rest = selective_scan_cuda_oflex.fwd(u, delta, A, B, C, D, delta_bias, delta_softplus, 1, oflex)
@@ -206,7 +235,7 @@ class SelectiveScanOflex(torch.autograd.Function):
         return out
     
     @staticmethod
-    @torch.cuda.amp.custom_bwd
+    @_amp_bwd
     def backward(ctx, dout, *args):
         u, delta, A, B, C, D, delta_bias, x = ctx.saved_tensors
         if dout.stride(-1) != 1:
@@ -218,9 +247,9 @@ class SelectiveScanOflex(torch.autograd.Function):
 
 
 class SelectiveScanFake(torch.autograd.Function):
-    # comment all checks if inside cross_selective_scan
+    # used for testing / ablations only
     @staticmethod
-    @torch.cuda.amp.custom_fwd
+    @_amp_fwd
     def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=False, nrows=1, backnrows=1, oflex=True):
         ctx.delta_softplus = delta_softplus
         ctx.backnrows = backnrows
@@ -230,12 +259,18 @@ class SelectiveScanFake(torch.autograd.Function):
         return out
     
     @staticmethod
-    @torch.cuda.amp.custom_bwd
+    @_amp_bwd
     def backward(ctx, dout, *args):
         u, delta, A, B, C, D, delta_bias, x = ctx.saved_tensors
         if dout.stride(-1) != 1:
             dout = dout.contiguous()
-        du, ddelta, dA, dB, dC, dD, ddelta_bias = u * 0, delta * 0, A * 0, B * 0, C * 0, C * 0, (D * 0 if D else None), (delta_bias * 0 if delta_bias else None)
+        du       = u * 0
+        ddelta   = delta * 0
+        dA       = A * 0
+        dB       = B * 0
+        dC       = C * 0
+        dD       = D * 0 if D is not None else None
+        ddelta_bias = delta_bias * 0 if delta_bias is not None else None
         return (du, ddelta, dA, dB, dC, dD, ddelta_bias, None, None, None, None)
 
 # =============

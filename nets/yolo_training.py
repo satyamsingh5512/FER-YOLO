@@ -163,7 +163,7 @@ class YOLOLoss(nn.Module):
         pair_wise_ious      = self.bboxes_iou(gt_bboxes_per_image, bboxes_preds_per_image, False)
         pair_wise_ious_loss = -torch.log(pair_wise_ious + 1e-8)
         if self.fp16:
-            with torch.cuda.amp.autocast(enabled=False):
+            with torch.amp.autocast(device_type='cuda', enabled=False):
                 cls_preds_          = cls_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_() * obj_preds_.unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
                 gt_cls_per_image    = F.one_hot(gt_classes.to(torch.int64), self.num_classes).float().unsqueeze(1).repeat(1, num_in_boxes_anchor, 1)
                 pair_wise_cls_loss  = F.binary_cross_entropy(cls_preds_.sqrt_(), gt_cls_per_image, reduction="none").sum(-1)
