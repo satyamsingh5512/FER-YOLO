@@ -1,128 +1,56 @@
 #!/bin/bash
 # ============================================================
-# RunPod ONE-CLICK setup + train — FER-YOLO-Mamba
+# RunPod Setup — FER-YOLO-Mamba on RTX 6000
+# Run once after starting your pod:  bash runpod_setup.sh
 # ============================================================
-#
-# On a fresh RunPod GPU pod, this single script does everything:
-#   1. Show GPU info
-#   2. Install Python deps (requirements.txt)
-#   3. Install CUDA extensions (causal-conv1d + mamba-ssm prebuilt wheels)
-#   4. Download RAF-DB dataset from Google Drive (~1.8 GB)
-#   5. Generate annotation files
-#   6. Start training (config auto-scales to your GPU VRAM)
-#
-# Recommended RunPod template: PyTorch 2.6 – 2.10 on CUDA 12.x
-# Works on: T4 / V100 / 3090 / 4090 / L4 / A10 / A100 / RTX 6000
-#
-# Usage
-# -----
-#   # Clone and run in one shot:
-#   git clone https://github.com/satyamsingh5512/FER-YOLO /workspace/FER-YOLO
-#   cd /workspace/FER-YOLO
-#   bash runpod_setup.sh
-#
-#   # Already have the dataset locally? Pass its path to skip download:
-#   bash runpod_setup.sh /path/to/basic
-#
-# ============================================================
-
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "${SCRIPT_DIR}"
+echo "=============================="
+echo " GPU Info"
+echo "=============================="
+nvidia-smi
 
-# Optional: user-supplied dataset path skips the Google Drive download
-USER_DATASET_PATH="${1:-}"
-
-# ── 1. GPU info ───────────────────────────────────────────────────────────────
-echo "================================================"
-echo " Step 1/6 — GPU Info"
-echo "================================================"
-nvidia-smi || { echo "WARNING: nvidia-smi not found."; echo "Ensure you started a GPU pod."; }
 echo ""
-
-# ── 2. Python deps ────────────────────────────────────────────────────────────
-echo "================================================"
-echo " Step 2/6 — Python dependencies"
-echo "================================================"
-pip install -q -r requirements.txt
-echo "Done."
-echo ""
-
-# ── 3. CUDA extensions ───────────────────────────────────────────────────────
-echo "================================================"
-echo " Step 3/6 — CUDA extensions (causal-conv1d + mamba-ssm)"
-echo "           Prebuilt wheels — no source compile needed"
-echo "================================================"
-python3 install_mamba.py
-echo ""
-
-# ── 4. Dataset ────────────────────────────────────────────────────────────────
-echo "================================================"
-echo " Step 4/6 — RAF-DB Dataset"
-echo "================================================"
-
-if [ -n "${USER_DATASET_PATH}" ] && [ -d "${USER_DATASET_PATH}/EmoLabel" ]; then
-    # User supplied path — save it and skip download
-    echo "Using supplied dataset: ${USER_DATASET_PATH}"
-    echo "${USER_DATASET_PATH}" > "${SCRIPT_DIR}/.dataset_path"
-
-elif [ -f "${SCRIPT_DIR}/.dataset_path" ]; then
-    SAVED=$(cat "${SCRIPT_DIR}/.dataset_path")
-    if [ -d "${SAVED}/EmoLabel" ]; then
-        echo "Dataset already present: ${SAVED}"
-    else
-        python3 download_dataset.py --output "${SCRIPT_DIR}/dataset1"
+echo "=============================="
+echo " Setting CUDA_HOME"
+echo "=============================="
+for p in /usr/local/cuda /usr/local/cuda-12 /usr/local/cuda-12.9; do
+    if [ -d "$p" ]; then
+        export CUDA_HOME=$p
+        export PATH=$CUDA_HOME/bin:$PATH
+        echo "CUDA_HOME = $CUDA_HOME"
+        break
     fi
-
-else
-    # Check dataset1 before hitting Google Drive
-    _D1_ROOT=$(python3 -c "
-import os, sys
-def find_raf(d):
-    req = {'EmoLabel','Annotation','Image'}
-    for root, dirs, files in os.walk(d):
-        if req <= set(dirs): print(root); sys.exit(0)
-find_raf('${SCRIPT_DIR}/dataset1')
-" 2>/dev/null || true)
-
-    if [ -n "${_D1_ROOT}" ] && [ -d "${_D1_ROOT}/EmoLabel" ]; then
-        echo "Dataset found in dataset1: ${_D1_ROOT}"
-        echo "${_D1_ROOT}" > "${SCRIPT_DIR}/.dataset_path"
-    else
-        echo "Downloading RAF-DB from Google Drive (~1.8 GB) …"
-        python3 download_dataset.py --output "${SCRIPT_DIR}/dataset1"
-    fi
-fi
-
-RAF_ROOT=$(cat "${SCRIPT_DIR}/.dataset_path" 2>/dev/null || echo "")
-
-if [ -z "${RAF_ROOT}" ] || [ ! -d "${RAF_ROOT}/EmoLabel" ]; then
-    echo ""
-    echo "ERROR: Dataset not found after download step."
-    echo "See the manual-download instructions printed above, then re-run:"
-    echo "  bash runpod_setup.sh /path/to/basic"
-    exit 1
-fi
-echo "RAF-DB root : ${RAF_ROOT}"
-echo ""
-
-# ── 5. Generate annotations ───────────────────────────────────────────────────
-echo "================================================"
-echo " Step 5/6 — Generate annotation files"
-echo "================================================"
-python3 convert_raf_to_yolo.py \
-    --dataset_root "${RAF_ROOT}" \
-    --output_dir   "${SCRIPT_DIR}"
-echo ""
-
-# ── 6. Train ──────────────────────────────────────────────────────────────────
-echo "================================================"
-echo " Step 6/6 — Training  (auto-scaled to GPU VRAM)"
-echo "================================================"
-python3 train_kaggle.py
+done
+export MAX_JOBS=4
 
 echo ""
-echo "================================================"
-echo " All done!  Checkpoints → ${SCRIPT_DIR}/logs/"
-echo "================================================"
+echo "=============================="
+echo " Installing dependencies"
+echo "=============================="
+pip install -q packaging einops
+pip install -q "timm>=0.6.13,<0.9.0"
+
+# causal-conv1d is skipped — only selective_scan_cuda from mamba-ssm is needed
+pip install --no-deps "mamba-ssm>=2.0.3" || \
+pip install --no-deps --no-build-isolation "mamba-ssm>=2.0.3" || \
+pip install "mamba-ssm>=2.0.3"
+
+echo ""
+echo "=============================="
+echo " Verifying"
+echo "=============================="
+python3 - <<'PYEOF'
+import torch
+import selective_scan_cuda
+import timm, einops
+
+p = torch.cuda.get_device_properties(0)
+print(f"GPU     : {p.name}")
+print(f"VRAM    : {p.total_memory/1e9:.1f} GB")
+print(f"PyTorch : {torch.__version__}")
+print(f"CUDA    : {torch.version.cuda}")
+print(f"timm    : {timm.__version__}")
+print(f"selective_scan_cuda : OK")
+print("\nSetup complete.")
+PYEOF

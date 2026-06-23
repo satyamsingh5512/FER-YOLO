@@ -1,120 +1,65 @@
 #!/bin/bash
 # ============================================================
-# RunPod training launcher — FER-YOLO-Mamba
+# RunPod Training — FER-YOLO-Mamba on RTX 6000
+#
+# Usage:
+#   bash run_training.sh /path/to/basic
+#
+# Example:
+#   bash run_training.sh /workspace/dataset/basic
+#
+# If no argument given, looks for the dataset next to this script.
 # ============================================================
-#
-# Usage (all equivalent — dataset is auto-located or downloaded):
-#
-#   bash run_training.sh                         # auto-detect / auto-download
-#   bash run_training.sh /path/to/basic          # explicit dataset root
-#
-# Training config auto-scales to GPU VRAM. Override via env vars:
-#   EPOCHS=2 UNFREEZE_BATCH=4 bash run_training.sh   # quick smoke test
-#
-# ============================================================
-
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "${SCRIPT_DIR}"
+
+# Dataset root — the folder containing EmoLabel/, Annotation/, Image/
+if [ -n "$1" ]; then
+    DATASET_ROOT="$1"
+else
+    DATASET_ROOT="${SCRIPT_DIR}/basic-20260621T140957Z-3-001/basic"
+fi
 
 echo "=============================="
-echo " FER-YOLO-Mamba Training"
+echo " Config"
 echo "=============================="
-echo "Project dir : ${SCRIPT_DIR}"
-echo ""
+echo "Project dir  : ${SCRIPT_DIR}"
+echo "Dataset root : ${DATASET_ROOT}"
 
-# ── Step 0: Locate (or download) the RAF-DB dataset ─────────────────────────
-
-RAF_ROOT=""
-
-# Priority 1: explicit argument
-if [ -n "$1" ] && [ -d "$1/EmoLabel" ]; then
-    RAF_ROOT="$1"
-    echo "Dataset : ${RAF_ROOT}  (from argument)"
-
-# Priority 2: .dataset_path file (written by download_dataset.py)
-elif [ -f "${SCRIPT_DIR}/.dataset_path" ]; then
-    SAVED=$(cat "${SCRIPT_DIR}/.dataset_path")
-    if [ -d "${SAVED}/EmoLabel" ]; then
-        RAF_ROOT="${SAVED}"
-        echo "Dataset : ${RAF_ROOT}  (from .dataset_path)"
-    fi
-fi
-
-# Priority 3: well-known local path dataset1/
-if [ -z "${RAF_ROOT}" ]; then
-    RAF_ROOT=$(python3 - << 'PYEOF'
-import os, sys
-
-def find_raf(start):
-    required = {"EmoLabel", "Annotation", "Image"}
-    for root, dirs, files in os.walk(start):
-        if required <= set(dirs):
-            return root
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
-    return None
-
-script_dir = "/workspace/FER-YOLO"
-# Check dataset1 first (explicit user-provided location), then broader scan
-for search in [
-    os.path.join(script_dir, "dataset1"),
-    script_dir,
-    os.path.dirname(script_dir),
-    "/workspace",
-]:
-    r = find_raf(search)
-    if r:
-        print(r)
-        sys.exit(0)
-PYEOF
-    )
-    if [ -n "${RAF_ROOT}" ] && [ -d "${RAF_ROOT}/EmoLabel" ]; then
-        echo "Dataset : ${RAF_ROOT}  (auto-detected)"
-    else
-        RAF_ROOT=""
-    fi
-fi
-
-# Priority 4: download from Google Drive
-if [ -z "${RAF_ROOT}" ]; then
+# Validate dataset
+if [ ! -d "${DATASET_ROOT}/EmoLabel" ]; then
     echo ""
-    echo "Dataset not found locally."
-    echo "Downloading RAF-DB from Google Drive (~1.8 GB) …"
-    echo ""
-    python3 download_dataset.py --output "${SCRIPT_DIR}/dataset"
-    if [ -f "${SCRIPT_DIR}/.dataset_path" ]; then
-        RAF_ROOT=$(cat "${SCRIPT_DIR}/.dataset_path")
-    fi
-fi
-
-# Verify we have a valid root
-if [ -z "${RAF_ROOT}" ] || [ ! -d "${RAF_ROOT}/EmoLabel" ]; then
-    echo ""
-    echo "ERROR: Could not locate RAF-DB dataset (EmoLabel/ not found)."
-    echo ""
-    echo "Options:"
-    echo "  1. Re-run with an explicit path:"
-    echo "       bash run_training.sh /path/to/basic"
-    echo "  2. Upload the dataset manually then re-run:"
-    echo "       scp -r basic/ root@<POD_IP>:${SCRIPT_DIR}/"
-    echo "       bash run_training.sh ${SCRIPT_DIR}/basic"
-    echo "  3. Run the downloader directly:"
-    echo "       python3 download_dataset.py --output ${SCRIPT_DIR}/dataset"
+    echo "ERROR: EmoLabel/ not found inside ${DATASET_ROOT}"
+    echo "Usage: bash run_training.sh /path/to/basic"
     exit 1
 fi
+
+cd "${SCRIPT_DIR}"
 
 echo ""
 echo "=============================="
 echo " Step 1 — Generate annotations"
 echo "=============================="
 python3 convert_raf_to_yolo.py \
-    --dataset_root "${RAF_ROOT}" \
-    --output_dir   "${SCRIPT_DIR}"
+    --dataset_root "${DATASET_ROOT}" \
+    --output_dir "${SCRIPT_DIR}"
+
+# Verify
+TRAIN_COUNT=$(wc -l < "${SCRIPT_DIR}/raf_train.txt")
+VAL_COUNT=$(wc -l < "${SCRIPT_DIR}/raf_val.txt")
+echo "Train samples : ${TRAIN_COUNT}"
+echo "Val   samples : ${VAL_COUNT}"
+
+if [ "$TRAIN_COUNT" -eq 0 ]; then
+    echo "ERROR: 0 training samples generated. Check dataset path."
+    exit 1
+fi
 
 echo ""
 echo "=============================="
-echo " Step 2 — Start training  (config auto-scales to GPU VRAM)"
+echo " Step 2 — Start training"
+echo " RTX 6000: 640x640, batch 64/32, fp16, 8 workers"
 echo "=============================="
 python3 train_kaggle.py
 
