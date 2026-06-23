@@ -31,9 +31,10 @@ echo "=============================="
 pip install -q packaging einops
 pip install -q "timm>=0.6.13,<0.9.0"
 
-# causal-conv1d is skipped — only selective_scan_cuda from mamba-ssm is needed
-pip install --no-deps "mamba-ssm>=2.0.3" || \
-pip install --no-deps --no-build-isolation "mamba-ssm>=2.0.3" || \
+# mamba-ssm needs --no-build-isolation so the build can find the system PyTorch
+echo "  mamba-ssm (compiling CUDA kernels ~10 min)..."
+pip install --no-build-isolation --no-deps "mamba-ssm>=2.0.3" || \
+pip install --no-build-isolation "mamba-ssm>=2.0.3" || \
 pip install "mamba-ssm>=2.0.3"
 
 echo ""
