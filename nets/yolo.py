@@ -17,13 +17,14 @@ try:
 except ImportError:
     from timm.layers import DropPath, to_2tuple, trunc_normal_
 
-# PyTorch >= 2.4 deprecated torch.cuda.amp.custom_fwd/custom_bwd
-if hasattr(torch.cuda.amp, 'custom_fwd'):
-    _amp_fwd = torch.cuda.amp.custom_fwd
-    _amp_bwd = torch.cuda.amp.custom_bwd
-else:
+# PyTorch >= 2.1: use torch.amp.custom_fwd/bwd (cuda.amp versions are deprecated)
+try:
     _amp_fwd = torch.amp.custom_fwd(device_type='cuda')
     _amp_bwd = torch.amp.custom_bwd(device_type='cuda')
+except (AttributeError, TypeError):
+    # fallback for older PyTorch
+    _amp_fwd = torch.cuda.amp.custom_fwd
+    _amp_bwd = torch.cuda.amp.custom_bwd
 
 # mamba-ssm CUDA kernels — try standard package first, then VMamba custom.
 #
