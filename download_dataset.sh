@@ -20,7 +20,7 @@ mkdir -p "${DOWNLOAD_DIR}"
 pip install -q gdown
 
 echo "Downloading..."
-gdown --id "${GDRIVE_FILE_ID}" -O "${ZIP_PATH}"
+gdown "https://drive.google.com/uc?id=${GDRIVE_FILE_ID}" -O "${ZIP_PATH}"
 
 echo ""
 echo "=============================="
