@@ -65,22 +65,22 @@ if __name__ == "__main__":
         _vram_gb, _gpu_name = 0.0, "CPU"
 
     if _vram_gb >= 40:        # A100 40GB / RTX 6000 Ada 48GB
-        _p = dict(inp=640, fbs=64, ubs=32, workers=8)
+        _p = dict(inp=224, fbs=32, ubs=32, workers=8)
     elif _vram_gb >= 22:      # 24GB: RTX 3090/4090, L4, A10
-        _p = dict(inp=640, fbs=32, ubs=16, workers=6)
+        _p = dict(inp=224, fbs=32, ubs=32, workers=6)
     elif _vram_gb >= 14:      # 16GB: Kaggle T4, V100
-        _p = dict(inp=640, fbs=16, ubs=8,  workers=4)
+        _p = dict(inp=224, fbs=32, ubs=32, workers=4)
     elif _vram_gb >= 10:      # 12GB
-        _p = dict(inp=512, fbs=12, ubs=6,  workers=4)
+        _p = dict(inp=224, fbs=16, ubs=16, workers=4)
     else:                     # smaller / unknown
-        _p = dict(inp=512, fbs=8,  ubs=4,  workers=2)
+        _p = dict(inp=224, fbs=8,  ubs=8,  workers=2)
 
     print(f"GPU         : {_gpu_name}  ({_vram_gb:.1f} GB)")
 
     seed            = _env("SEED", 11, int)
     distributed     = False
     sync_bn         = False
-    fp16            = _env_bool("FP16", Cuda)   # fp16 is only meaningful on GPU
+    fp16            = False                                        # AMP disabled
     classes_path    = os.environ.get("CLASSES_PATH", 'model_data/sfew_classes.txt')
     model_path      = os.environ.get("MODEL_PATH", 'model_data/yolox_s.pth')
     _inp            = _env("INPUT_SIZE", _p["inp"], int)
@@ -98,9 +98,10 @@ if __name__ == "__main__":
     Init_Epoch          = _env("INIT_EPOCH", 0, int)
     Freeze_Epoch        = _env("FREEZE_EPOCH", 50, int)
     Freeze_batch_size   = _env("FREEZE_BATCH", _p["fbs"], int)
-    UnFreeze_Epoch      = _env("EPOCHS", 300, int)
+    UnFreeze_Epoch      = _env("EPOCHS", 250, int)               # 250 epochs
     Unfreeze_batch_size = _env("UNFREEZE_BATCH", _p["ubs"], int)
     Freeze_Train        = _env_bool("FREEZE_TRAIN", True)
+    patience            = _env("PATIENCE", 50, int)              # early stopping
 
     # Optimizer settings
     Init_lr             = _env("INIT_LR", 1e-2, float)
@@ -318,7 +319,11 @@ if __name__ == "__main__":
                                             eval_flag=eval_flag, period=eval_period)
         else:
             eval_callback   = None
-            
+
+        # Early stopping state
+        _best_loss      = float('inf')
+        _no_improve     = 0
+
         for epoch in range(Init_Epoch, UnFreeze_Epoch):
             if epoch >= Freeze_Epoch and not UnFreeze_flag and Freeze_Train:
                 batch_size = Unfreeze_batch_size
@@ -358,7 +363,22 @@ if __name__ == "__main__":
             set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
 
             fit_one_epoch(model_train, model, ema, yolo_loss, loss_history, eval_callback, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
-                        
+
+            # ── Early stopping ──────────────────────────────────────────
+            if local_rank == 0 and loss_history is not None and len(loss_history.val_loss) > 0:
+                current_val_loss = loss_history.val_loss[-1]
+                if current_val_loss < _best_loss:
+                    _best_loss  = current_val_loss
+                    _no_improve = 0
+                    print(f"  [EarlyStopping] val_loss improved to {_best_loss:.4f}")
+                else:
+                    _no_improve += 1
+                    print(f"  [EarlyStopping] no improvement for {_no_improve}/{patience} epochs")
+                    if _no_improve >= patience:
+                        print(f"\n  [EarlyStopping] Stopping at epoch {epoch+1} — "
+                              f"val_loss did not improve for {patience} consecutive epochs.")
+                        break
+
             if distributed:
                 dist.barrier()
 
